@@ -1,0 +1,37 @@
+input:
+  # mqtt:
+  #   urls:
+  #     - tcp://localhost:1883
+  #   client_id: "demo1"
+  #   connect_timeout: 30s
+  #   topics:
+  #     - "t/1"
+  #   auto_replay_nacks: true
+  generate:
+    count: 1
+    interval: 1s
+    mapping: |
+      root = {
+        "device": "sensor",
+        "timestamp": now(),
+        "temperature": random_int() % 100,
+        "humidity": random_int() % 100
+      }
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+
+output:
+  iotdb:
+    max_in_flight: 1
+    urls:
+      - 47.76.29.6:6667
+    username: root
+    password: root
+    device_id: root.ln.wf01
+    measurement: temperature
+
+logger:
+  level: DEBUG
