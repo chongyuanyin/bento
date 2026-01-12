@@ -19,7 +19,8 @@ import (
 	// import your plugins:
 	_ "flowmq/plugin/dolphindb"
 	_ "flowmq/plugin/iotdb"
-	_ "flowmq/plugin/mqtt"
+	_ "github.com/warpstreamlabs/bento/public/components/kafka"
+	_ "github.com/warpstreamlabs/bento/public/components/mqtt"
 )
 
 func main() {

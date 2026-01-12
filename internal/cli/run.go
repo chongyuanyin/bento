@@ -340,6 +340,7 @@ For more information check out the docs at:
 			},
 			listCliCommand(opts),
 			createCliCommand(opts),
+			lookupCliCommand(opts),
 			test.CliCommand(opts),
 			clitemplate.CliCommand(opts),
 			blobl.CliCommand(opts),
