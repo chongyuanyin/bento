@@ -21,7 +21,7 @@ import (
 // RunService runs a service command (either the default or the streams
 // subcommand).
 func RunService(c *cli.Context, cliOpts *CLIOpts, streamsMode bool) int {
-	mainPath, inferredMainPath, confReader := ReadConfig(c, cliOpts, streamsMode)
+	mainPath, inferredMainPath, confReader := ReadConfig(c, cliOpts, streamsMode, true)
 
 	conf, pConf, lints, lintWarns, err := confReader.Read()
 	if err != nil {

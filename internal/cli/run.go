@@ -251,7 +251,7 @@ variables have been resolved:
 
   {{.BinaryName}} -c ./config.yaml echo | less`)[1:],
 				Action: func(c *cli.Context) error {
-					_, _, confReader := common.ReadConfig(c, opts, false)
+					_, _, confReader := common.ReadConfig(c, opts, false, true)
 					_, pConf, _, _, err := confReader.Read()
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "Configuration file read error: %v\n", err)
@@ -341,6 +341,7 @@ For more information check out the docs at:
 			listCliCommand(opts),
 			createCliCommand(opts),
 			lookupCliCommand(opts),
+			pingCliCommand(opts),
 			test.CliCommand(opts),
 			clitemplate.CliCommand(opts),
 			blobl.CliCommand(opts),

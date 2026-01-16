@@ -62,3 +62,37 @@ func FromParsed(prov docs.Provider, pConf *docs.ParsedConfig, rawSource any) (co
 	}
 	return
 }
+
+func PartialFromParsed(prov docs.Provider, pConf *docs.ParsedConfig, rawSource any) (conf Config, err error) {
+	conf.rawSource = rawSource
+	var v any
+	v = pConf.OptFieldAny(fieldInput)
+	if v != nil {
+		if conf.Input, err = input.FromAny(prov, v); err != nil {
+			return
+		}
+	}
+
+	v = pConf.OptFieldAny(fieldBuffer)
+	if v != nil {
+		if conf.Buffer, err = buffer.FromAny(prov, v); err != nil {
+			return
+		}
+	}
+
+	v = pConf.OptFieldAny(fieldPipeline)
+	if v != nil {
+		if conf.Pipeline, err = pipeline.FromAny(prov, v); err != nil {
+			return
+		}
+	}
+
+	v = pConf.OptFieldAny(fieldOutput)
+	if v != nil {
+		if conf.Output, err = output.FromAny(prov, v); err != nil {
+			return
+		}
+	}
+
+	return
+}

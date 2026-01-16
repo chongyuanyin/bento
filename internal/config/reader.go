@@ -84,6 +84,9 @@ type Reader struct {
 	changeFlushPeriod  time.Duration
 	changeDelayPeriod  time.Duration
 	filesRefreshPeriod time.Duration
+
+	// Controls whether the default values should be added during mapping.
+	applyDefault bool
 }
 
 // NewReader creates a new config reader.
@@ -109,6 +112,8 @@ func NewReader(mainPath string, resourcePaths []string, opts ...OptFunc) *Reader
 		specStreamOnly:    stream.Spec(),
 		specObservability: SpecWithoutStream(Spec()),
 		specResources:     manager.Spec(),
+
+		applyDefault: true,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -180,6 +185,12 @@ func OptSetStreamPaths(streamsPaths ...string) OptFunc {
 func OptUseFS(fs ifs.FS) OptFunc {
 	return func(r *Reader) {
 		r.fs = fs
+	}
+}
+
+func OptSetApplyDefault(applyDefault bool) OptFunc {
+	return func(r *Reader) {
+		r.applyDefault = applyDefault
 	}
 }
 
@@ -346,7 +357,12 @@ func (r *Reader) readMain(mainPath string) (conf Type, pConf *docs.ParsedConfig,
 	var rawSource any
 	_ = rawNode.Decode(&rawSource)
 
-	if pConf, err = confSpec.ParsedConfigFromAny(rawNode); err != nil {
+	if r.applyDefault {
+		pConf, err = confSpec.ParsedConfigFromAny(rawNode)
+	} else {
+		pConf, err = confSpec.ParsedConfigFromAnyWithoutDefault(rawNode)
+	}
+	if err != nil {
 		return
 	}
 
@@ -354,7 +370,11 @@ func (r *Reader) readMain(mainPath string) (conf Type, pConf *docs.ParsedConfig,
 		conf.rawSource = rawSource
 		err = noStreamFromParsed(r.lintConf.DocsProvider, pConf, &conf)
 	} else {
-		conf, err = FromParsed(r.lintConf.DocsProvider, pConf, rawSource)
+		if r.applyDefault {
+			conf, err = FromParsed(r.lintConf.DocsProvider, pConf, rawSource)
+		} else {
+			conf, err = PartialFromParsed(r.lintConf.DocsProvider, pConf, rawSource)
+		}
 	}
 	return
 }

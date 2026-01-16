@@ -819,6 +819,9 @@ type ToValueConfig struct {
 	// decoding it into an interface, otherwise the raw yaml.Node is
 	// returned in its place.
 	FallbackToAny bool
+
+	// Whether default values should be excluded during conversion.
+	ExcludeDefault bool
 }
 
 // YAMLToValue converts a yaml node into a generic value by referencing the
@@ -951,15 +954,17 @@ func (f FieldSpecs) YAMLToMap(node *yaml.Node, conf ToValueConfig) (map[string]a
 		}
 	}
 
-	for k, v := range pendingFieldsMap {
-		defValue, err := getDefault(k, v)
-		if err != nil {
-			if v.needsDefault() && !conf.Passive {
-				return nil, err
+	if !conf.ExcludeDefault {
+		for k, v := range pendingFieldsMap {
+			defValue, err := getDefault(k, v)
+			if err != nil {
+				if v.needsDefault() && !conf.Passive {
+					return nil, err
+				}
+				continue
 			}
-			continue
+			resultMap[k] = value.IClone(defValue)
 		}
-		resultMap[k] = value.IClone(defValue)
 	}
 
 	return resultMap, nil

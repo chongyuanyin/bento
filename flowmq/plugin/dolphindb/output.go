@@ -99,12 +99,25 @@ type tableMeta struct {
 	sortColumns      []string
 }
 
+type dolphindbPreChecker struct {
+	log *service.Logger
+
+	poolConfig *api.PoolOption
+}
+
 func init() {
-	fmt.Println("!!init")
 	err := service.RegisterBatchOutput(
 		"dolphindb",
 		outputConfigSpec(),
 		constructOutput)
+	if err != nil {
+		panic(err)
+	}
+	err = service.RegisterPreChecker(
+		"dolphindb",
+		"output",
+		outputConfigSpec(),
+		constructPreChecker)
 	if err != nil {
 		panic(err)
 	}
@@ -135,15 +148,14 @@ func constructOutput(conf *service.ParsedConfig, mgr *service.Resources) (out se
 	return
 }
 
-func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolphindbWriter, error) {
+func getConnectFields(conf *service.ParsedConfig) (*api.PoolOption, error) {
 	var (
-		address, username, password, directory, partitionType, partitionScheme, engine string
-		connectTimeout                                                                 time.Duration
-		connRetryMax, poolSize                                                         int
-		lbEnabled                                                                      bool
-		lbAddresses, columns, columnTypes, partitionCols, sortCols                     []string
-		table                                                                          string
-		err                                                                            error
+		address, username, password string
+		connectTimeout              time.Duration
+		connRetryMax, poolSize      int
+		lbEnabled                   bool
+		lbAddresses                 []string
+		err                         error
 	)
 
 	if address, err = conf.FieldString(fieldAddress); err != nil {
@@ -170,6 +182,34 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 	if lbAddresses, err = conf.FieldStringList(fieldLoadBalanceAddresses); err != nil {
 		return nil, err
 	}
+
+	poolConfig := &api.PoolOption{
+		Address:              address,
+		UserID:               username,
+		Password:             password,
+		PoolSize:             poolSize,
+		Timeout:              connectTimeout,
+		Reconnect:            true,
+		TryReconnectNums:     &connRetryMax,
+		LoadBalance:          lbEnabled,
+		LoadBalanceAddresses: lbAddresses,
+	}
+
+	return poolConfig, nil
+}
+
+func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolphindbWriter, error) {
+	var (
+		directory, partitionType, partitionScheme, engine string
+		columns, columnTypes, partitionCols, sortCols     []string
+		table                                             string
+	)
+
+	poolConfig, err := getConnectFields(conf)
+	if err != nil {
+		return nil, err
+	}
+
 	if directory, err = conf.FieldString(fieldDBDirectory); err != nil {
 		return nil, err
 	}
@@ -198,18 +238,6 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 		return nil, err
 	}
 
-	poolConfig := &api.PoolOption{
-		Address:              address,
-		UserID:               username,
-		Password:             password,
-		PoolSize:             poolSize,
-		Timeout:              connectTimeout,
-		Reconnect:            true,
-		TryReconnectNums:     &connRetryMax,
-		LoadBalance:          lbEnabled,
-		LoadBalanceAddresses: lbAddresses,
-	}
-
 	return &dolphindbWriter{
 		log:                     mgr.Logger(),
 		poolConfig:              poolConfig,
@@ -222,6 +250,18 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 		defaultColumnTypes:      columnTypes,
 		defaultPartitionColumns: partitionCols,
 		defaultSortColumns:      sortCols,
+	}, nil
+}
+
+func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (checker service.PreChecker, err error) {
+	poolConfig, err := getConnectFields(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dolphindbPreChecker{
+		log:        mgr.Logger(),
+		poolConfig: poolConfig,
 	}, nil
 }
 
@@ -439,6 +479,21 @@ func (writer *dolphindbWriter) Close(context.Context) error {
 	return nil
 }
 
+func (checker *dolphindbPreChecker) Check() error {
+	pool, err := api.NewDBConnectionPool(checker.poolConfig)
+	if err != nil {
+		checker.log.Errorf("failed to create connection pool: %v", err)
+		return err
+	}
+
+	// test connection
+	err = execTask(pool, `version()`)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func connectFields() []*service.ConfigField {
 	return []*service.ConfigField{
 		service.NewStringField(fieldAddress).
@@ -508,6 +563,21 @@ func buildScript(name, templ string, param map[string]any) (string, error) {
 }
 
 func execTask(pool *api.DBConnectionPool, script string) error {
+	task := &api.Task{
+		Script: script,
+	}
+	err := pool.Execute([]*api.Task{task})
+	if err != nil {
+		return err
+	}
+	if !task.IsSuccess() {
+		err := task.GetError()
+		return err
+	}
+	return nil
+}
+
+func execTaskWithResult(pool *api.DBConnectionPool, script string) error {
 	// getnametask := api.Task{Script: "111"}
 	// tasks := []*api.Task{&getnametask}
 	// err := pool.Execute(tasks)
@@ -560,17 +630,16 @@ func execTask(pool *api.DBConnectionPool, script string) error {
 }
 
 func (writer *dolphindbWriter) testDbAvailable() error {
-	versionTask := &api.Task{
-		Script: `version()`,
-	}
-	err := writer.connectionPool.Execute([]*api.Task{versionTask})
+	return execTask(writer.connectionPool, `version()`)
+}
+
+func doExecTask(pool *api.DBConnectionPool, task *api.Task) error {
+	err := pool.Execute([]*api.Task{task})
 	if err != nil {
-		writer.log.Errorf("failed to connect to db: %v", err)
 		return err
 	}
-	if !versionTask.IsSuccess() {
-		err := versionTask.GetError()
-		writer.log.Errorf("failed to connect to db: %v", err)
+	if !task.IsSuccess() {
+		err := task.GetError()
 		return err
 	}
 	return nil
@@ -589,7 +658,7 @@ func (writer *dolphindbWriter) createDatabase() error {
 		writer.log.Errorf("failed to generate script for database creation: %v", err)
 		return err
 	}
-	err = execTask(writer.connectionPool, script)
+	err = execTaskWithResult(writer.connectionPool, script)
 	if err != nil {
 		writer.log.Errorf("failed to create database: %v", err)
 		return err
@@ -612,7 +681,7 @@ func (writer *dolphindbWriter) createTable(meta tableMeta) error {
 		writer.log.Errorf("failed to generate script for table creation: %v", err)
 		return err
 	}
-	err = execTask(writer.connectionPool, script)
+	err = execTaskWithResult(writer.connectionPool, script)
 	if err != nil {
 		writer.log.Errorf("failed to create table: %v", err)
 		return err

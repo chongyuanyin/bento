@@ -8,6 +8,7 @@ import (
 
 	ibloblang "github.com/warpstreamlabs/bento/internal/bloblang"
 	"github.com/warpstreamlabs/bento/internal/bundle"
+	"github.com/warpstreamlabs/bento/internal/component"
 	"github.com/warpstreamlabs/bento/internal/component/buffer"
 	"github.com/warpstreamlabs/bento/internal/component/cache"
 	"github.com/warpstreamlabs/bento/internal/component/input"
@@ -717,4 +718,47 @@ func XFormatConfigJSON() ([]byte, error) {
 // DO NOT USE OUTSIDE OF TESTS.
 func (e *Environment) XRateLimitInitForTest(conf ratelimit.Config, mgr bundle.NewManagement) (ratelimit.V1, error) {
 	return e.internal.RateLimitInit(conf, mgr)
+}
+
+func (e *Environment) RegisterPreChecker(name, typ string, spec *ConfigSpec, ctor PreCheckerConstructor) error {
+	componentSpec := spec.component
+	componentSpec.Name = name
+	var docType docs.Type
+	switch typ {
+	case "input":
+		docType = docs.TypeInput
+	case "output":
+		docType = docs.TypeOutput
+	default:
+		return fmt.Errorf("unsupported plugin type with pre-checker '%v'", typ)
+	}
+	componentSpec.Type = docType
+	return e.internal.PreCheckerAdd(func(inputConf input.Config, ouputConf output.Config, nm bundle.NewManagement) (component.Checkable, error) {
+		var checker PreChecker
+		switch docType {
+		case docs.TypeInput:
+			pluginConf, err := extractConfig(nm, spec, name, inputConf.Plugin)
+			if err != nil {
+				return nil, err
+			}
+			checker, err = ctor(pluginConf, newResourcesFromManager(nm))
+			if err != nil {
+				return nil, err
+			}
+		case docs.TypeOutput:
+			pluginConf, err := extractConfig(nm, spec, name, ouputConf.Plugin)
+			if err != nil {
+				return nil, err
+			}
+			checker, err = ctor(pluginConf, newResourcesFromManager(nm))
+			if err != nil {
+				return nil, err
+			}
+		}
+		if checker != nil {
+			return newCheckerWrapper(checker), nil
+		}
+
+		return nil, nil
+	}, componentSpec)
 }

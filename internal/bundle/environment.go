@@ -20,6 +20,8 @@ type Environment struct {
 	scanners *ScannerSet
 
 	constructors *ConstructorSet
+
+	preChecker *PreCheckerSet
 }
 
 // NewEnvironment creates an empty environment.
@@ -35,6 +37,7 @@ func NewEnvironment() *Environment {
 		tracers:      &TracerSet{},
 		scanners:     &ScannerSet{},
 		constructors: &ConstructorSet{},
+		preChecker:   &PreCheckerSet{},
 	}
 }
 
@@ -116,4 +119,8 @@ var GlobalEnvironment = &Environment{
 	tracers:      AllTracers,
 	scanners:     AllScanners,
 	constructors: AllConstructors,
+	preChecker: &PreCheckerSet{
+		inputSpecs:  map[string]preCheckerSpec{},
+		outputSpecs: map[string]preCheckerSpec{},
+	},
 }

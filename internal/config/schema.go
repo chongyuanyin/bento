@@ -112,6 +112,18 @@ func FromParsed(prov docs.Provider, pConf *docs.ParsedConfig, rawSource any) (co
 	return
 }
 
+func PartialFromParsed(prov docs.Provider, pConf *docs.ParsedConfig, rawSource any) (conf Type, err error) {
+	conf.rawSource = rawSource
+	if conf.Config, err = stream.PartialFromParsed(prov, pConf, nil); err != nil {
+		return
+	}
+	if conf.ResourceConfig, err = manager.PartialFromParsed(prov, pConf); err != nil {
+		return
+	}
+	err = noStreamFromParsed(prov, pConf, &conf)
+	return
+}
+
 func noStreamFromParsed(prov docs.Provider, pConf *docs.ParsedConfig, conf *Type) (err error) {
 	if pConf.Contains(fieldHTTP) {
 		if conf.HTTP, err = api.FromParsed(pConf.Namespace(fieldHTTP)); err != nil {

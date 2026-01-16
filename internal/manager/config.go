@@ -134,3 +134,81 @@ func FromParsed(prov docs.Provider, pConf *docs.ParsedConfig) (conf ResourceConf
 	}
 	return
 }
+
+func PartialFromParsed(prov docs.Provider, pConf *docs.ParsedConfig) (conf ResourceConfig, err error) {
+	conf = NewResourceConfig()
+
+	var l []*docs.ParsedConfig
+	var v any
+
+	if l, err = pConf.OptFieldAnyList(fieldResourceInputs); err != nil {
+		return
+	}
+	for _, p := range l {
+		if v, err = p.FieldAny(); err != nil {
+			return
+		}
+		var c input.Config
+		if c, err = input.FromAny(prov, v); err != nil {
+			return
+		}
+		conf.ResourceInputs = append(conf.ResourceInputs, c)
+	}
+
+	if l, err = pConf.OptFieldAnyList(fieldResourceProcessors); err != nil {
+		return
+	}
+	for _, p := range l {
+		if v, err = p.FieldAny(); err != nil {
+			return
+		}
+		var c processor.Config
+		if c, err = processor.FromAny(prov, v); err != nil {
+			return
+		}
+		conf.ResourceProcessors = append(conf.ResourceProcessors, c)
+	}
+
+	if l, err = pConf.OptFieldAnyList(fieldResourceOutputs); err != nil {
+		return
+	}
+	for _, p := range l {
+		if v, err = p.FieldAny(); err != nil {
+			return
+		}
+		var c output.Config
+		if c, err = output.FromAny(prov, v); err != nil {
+			return
+		}
+		conf.ResourceOutputs = append(conf.ResourceOutputs, c)
+	}
+
+	if l, err = pConf.OptFieldAnyList(fieldResourceCaches); err != nil {
+		return
+	}
+	for _, p := range l {
+		if v, err = p.FieldAny(); err != nil {
+			return
+		}
+		var c cache.Config
+		if c, err = cache.FromAny(prov, v); err != nil {
+			return
+		}
+		conf.ResourceCaches = append(conf.ResourceCaches, c)
+	}
+
+	if l, err = pConf.OptFieldAnyList(fieldResourceRateLimits); err != nil {
+		return
+	}
+	for _, p := range l {
+		if v, err = p.FieldAny(); err != nil {
+			return
+		}
+		var c ratelimit.Config
+		if c, err = ratelimit.FromAny(prov, v); err != nil {
+			return
+		}
+		conf.ResourceRateLimits = append(conf.ResourceRateLimits, c)
+	}
+	return
+}

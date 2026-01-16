@@ -222,3 +222,9 @@ type ManagedConstructor func(mgr LimitedResources) error
 func RegisterManagedConstructor(ctor ManagedConstructor) error {
 	return globalEnvironment.RegisterManagedConstructor(ctor)
 }
+
+type PreCheckerConstructor func(conf *ParsedConfig, mgr *Resources) (out PreChecker, err error)
+
+func RegisterPreChecker(name, typ string, spec *ConfigSpec, ctor PreCheckerConstructor) error {
+	return globalEnvironment.RegisterPreChecker(name, typ, spec, ctor)
+}

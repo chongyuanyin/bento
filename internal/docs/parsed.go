@@ -35,6 +35,18 @@ func (f FieldSpecs) ParsedConfigFromAny(v any) (pConf *ParsedConfig, err error) 
 	return
 }
 
+func (f FieldSpecs) ParsedConfigFromAnyWithoutDefault(v any) (pConf *ParsedConfig, err error) {
+	pConf = &ParsedConfig{}
+	switch t := v.(type) {
+	case *yaml.Node:
+		pConf.line = &t.Line
+		pConf.generic, err = f.YAMLToMap(t, ToValueConfig{ExcludeDefault: true})
+	default:
+		pConf.generic, err = f.AnyToMap(v, ToValueConfig{ExcludeDefault: true})
+	}
+	return
+}
+
 // ParsedConfig represents a plugin configuration that has been validated and
 // parsed from a ConfigSpec, and allows plugin constructors to access
 // configuration fields.
@@ -99,6 +111,14 @@ func (p *ParsedConfig) FieldAny(path ...string) (any, error) {
 	return v, nil
 }
 
+func (p *ParsedConfig) OptFieldAny(path ...string) any {
+	v, exists := p.Field(path...)
+	if exists {
+		return v
+	}
+	return nil
+}
+
 // FieldAnyList accesses a field that is a list of any value types from the
 // parsed config by its name and returns the value as an array of *ParsedConfig
 // types, where each one represents an object or value in the list. Returns an
@@ -119,6 +139,24 @@ func (p *ParsedConfig) FieldAnyList(path ...string) ([]*ParsedConfig, error) {
 		}
 	}
 	return sList, nil
+}
+
+func (p *ParsedConfig) OptFieldAnyList(path ...string) ([]*ParsedConfig, error) {
+	v, exists := p.Field(path...)
+	if exists {
+		iList, ok := v.([]any)
+		if !ok {
+			return nil, fmt.Errorf("expected field '%v' to be a list, got %T", p.FullDotPath(path...), v)
+		}
+		sList := make([]*ParsedConfig, len(iList))
+		for i, ev := range iList {
+			sList[i] = &ParsedConfig{
+				generic: ev,
+			}
+		}
+		return sList, nil
+	}
+	return nil, nil
 }
 
 // FieldAnyMap accesses a field that is an object of arbitrary keys and any

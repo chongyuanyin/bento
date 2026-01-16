@@ -34,13 +34,21 @@ const (
 	metaValueArray       = "value_array"
 )
 
-type iotdbWriter struct {
-	log *service.Logger
-
+type connectConfig struct {
 	poolConfig       *client.PoolConfig
 	sessionPool      *client.SessionPool
 	connectTimeoutMs int
 	maxPoolSize      int
+}
+type iotdbWriter struct {
+	log *service.Logger
+
+	connConf *connectConfig
+
+	// poolConfig       *client.PoolConfig
+	// sessionPool      *client.SessionPool
+	// connectTimeoutMs int
+	// maxPoolSize      int
 
 	defaultDeviceId    string
 	defaultMeasurement string
@@ -48,11 +56,25 @@ type iotdbWriter struct {
 	timestampPrecision string
 }
 
+type iotdbPreChecker struct {
+	log *service.Logger
+
+	connConf *connectConfig
+}
+
 func init() {
 	err := service.RegisterBatchOutput(
 		"iotdb",
 		outputConfigSpec(),
 		constructOutput)
+	if err != nil {
+		panic(err)
+	}
+	err = service.RegisterPreChecker(
+		"iotdb",
+		"output",
+		outputConfigSpec(),
+		constructPreChecker)
 	if err != nil {
 		panic(err)
 	}
@@ -88,18 +110,12 @@ func constructOutput(conf *service.ParsedConfig, mgr *service.Resources) (out se
 	return
 }
 
-func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdbWriter, error) {
-	// var count int
-	// var err error
-	// if count, err = conf.FieldInt(); err != nil {
-	// 	return nil, err
-	// }
+func getConnectFields(conf *service.ParsedConfig) (*connectConfig, error) {
 	var (
-		host, port, username, password                      string
-		nodeUrls                                            []string
-		connTimeoutMs, connRetryMax, maxPoolSize            int
-		deviceId, measurement, dataType, timestampPrecision string
-		err                                                 error
+		host, port, username, password           string
+		nodeUrls                                 []string
+		connTimeoutMs, connRetryMax, maxPoolSize int
+		err                                      error
 	)
 	if urls, err := conf.FieldStringList(fieldNodeUrls); err != nil {
 		return nil, err
@@ -138,6 +154,33 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdb
 	if maxPoolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
 		return nil, err
 	}
+
+	poolConfig := &client.PoolConfig{
+		Host:            host,
+		Port:            port,
+		NodeUrls:        nodeUrls,
+		UserName:        username,
+		Password:        password,
+		ConnectRetryMax: connRetryMax,
+	}
+
+	return &connectConfig{
+		poolConfig:       poolConfig,
+		connectTimeoutMs: connTimeoutMs,
+		maxPoolSize:      maxPoolSize,
+	}, nil
+}
+
+func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdbWriter, error) {
+	connConf, err := getConnectFields(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		deviceId, measurement, dataType, timestampPrecision string
+	)
+
 	if deviceId, err = conf.FieldString(fieldDeviceId); err != nil {
 		return nil, err
 	}
@@ -151,20 +194,9 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdb
 		return nil, err
 	}
 
-	poolConfig := &client.PoolConfig{
-		Host:            host,
-		Port:            port,
-		NodeUrls:        nodeUrls,
-		UserName:        username,
-		Password:        password,
-		ConnectRetryMax: connRetryMax,
-	}
-
 	return &iotdbWriter{
-		log:              mgr.Logger(),
-		poolConfig:       poolConfig,
-		connectTimeoutMs: connTimeoutMs,
-		maxPoolSize:      maxPoolSize,
+		log:      mgr.Logger(),
+		connConf: connConf,
 
 		defaultDeviceId:    deviceId,
 		defaultMeasurement: measurement,
@@ -173,8 +205,21 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdb
 	}, nil
 }
 
+func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (checker service.PreChecker, err error) {
+	connConf, err := getConnectFields(conf)
+	if err != nil {
+		return nil, err
+	}
+
+	return &iotdbPreChecker{
+		log:      mgr.Logger(),
+		connConf: connConf,
+	}, nil
+}
+
 func (writer *iotdbWriter) Connect(ctx context.Context) error {
-	pool := client.NewSessionPool(writer.poolConfig, writer.maxPoolSize, writer.connectTimeoutMs, writer.connectTimeoutMs, false)
+	connConf := writer.connConf
+	pool := client.NewSessionPool(connConf.poolConfig, connConf.maxPoolSize, connConf.connectTimeoutMs, connConf.connectTimeoutMs, false)
 	// try to get session to verify connection
 	session, err := pool.GetSession()
 	defer pool.PutBack(session)
@@ -183,7 +228,7 @@ func (writer *iotdbWriter) Connect(ctx context.Context) error {
 		return err
 	}
 
-	writer.sessionPool = &pool
+	connConf.sessionPool = &pool
 	return nil
 }
 
@@ -195,7 +240,7 @@ func (writer *iotdbWriter) WriteBatch(ctx context.Context, batch service.Message
 		values       = [][]interface{}{}
 		timestamps   = []int64{}
 	)
-	pool := writer.sessionPool
+	pool := writer.connConf.sessionPool
 	if pool == nil {
 		writer.log.Error("failed to get session pool")
 		return service.ErrNotConnected
@@ -349,10 +394,31 @@ func (writer *iotdbWriter) WriteBatch(ctx context.Context, batch service.Message
 }
 
 func (writer *iotdbWriter) Close(context.Context) error {
-	pool := writer.sessionPool
+	pool := writer.connConf.sessionPool
 	if pool != nil {
 		pool.Close()
 	}
+	return nil
+}
+func (checker *iotdbPreChecker) Check() error {
+	connConf := checker.connConf
+	pool := client.NewSessionPool(connConf.poolConfig, connConf.maxPoolSize, connConf.connectTimeoutMs, connConf.connectTimeoutMs, false)
+	defer func() {
+		pool.Close()
+	}()
+	// try to get session to verify connection
+	session, err := pool.GetSession()
+	if err != nil {
+		checker.log.Errorf("failed to get session: %v", err)
+		return err
+	}
+
+	timeout := int64(connConf.connectTimeoutMs)
+	_, err = session.ExecuteQueryStatement("SHOW VERSION", &timeout)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
