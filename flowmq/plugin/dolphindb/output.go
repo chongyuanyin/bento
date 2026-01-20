@@ -29,25 +29,26 @@ const (
 	fieldPartitionScheme = "partition_scheme"
 	fieldEngine          = "engine"
 
-	fieldTable            = "table"
-	fieldColumns          = "columns"
-	fieldColumnTypes      = "column_types"
-	fieldPartitionColumns = "partition_columns"
-	fieldSortColumns      = "sort_columns"
+	fieldTable   = "table"
+	fieldColumns = "columns"
+	// fieldColumnTypes      = "column_types"
+	// fieldPartitionColumns = "partition_columns"
+	// fieldSortColumns      = "sort_columns"
+	fieldColumnName        = "name"
+	fieldColumnType        = "type"
+	fieldIsPartitionColumn = "is_partition_column"
+	fieldIsSortColumn      = "is_sort_column"
 
-	// fieldDeviceId           = "device_id"
-	// fieldMeasurement        = "measurement"
-	// fieldDataType           = "data_type"
-	// fieldTimestampPrecision = "timestamp_precision"
+	DEFAULT_CONN_TIMEOUT   = 10 * time.Second
+	DEFAULT_RETRY_MAX      = 3
+	DEFAULT_POOL_SIZE      = 10
+	DEFAULT_LB_ENABLED     = false
+	DEFAULT_PARTITION_TYPE = "VALUE"
+	DEFAULT_ENGINE         = "TSDB"
 
-	// metaDeviceId         = "device_id"
-	// metaMeasurement      = "measurement"
-	// metaDataType         = "data_type"
-	// metaTimestamp        = "timestamp"
-	// metaValue            = "value"
-	// metaMeasurementArray = "measurement_array"
-	// metaDataTypeArray    = "data_type_array"
-	// metaValueArray       = "value_array"
+	DEFAULT_COL_TIMESTAMP  = "timestamp"
+	DEFAULT_COL_VALUE      = "value"
+	DEFAULT_COL_VALUE_TYPE = "string"
 )
 
 type dolphindbWriter struct {
@@ -66,30 +67,7 @@ type dolphindbWriter struct {
 	defaultColumnTypes      []string
 	defaultPartitionColumns []string
 	defaultSortColumns      []string
-
-	// connectTimeoutMs int
-	// maxPoolSize      int
-
-	// defaultDeviceId    string
-	// defaultMeasurement string
-	// defaultDataType    string
-	// timestampPrecision string
 }
-
-// type dbTaskParam struct {
-// 	Directory       string
-// 	PartitionType   string
-// 	PartitionScheme string
-// 	Engine          string
-// }
-
-// type tableTaskParam struct {
-// 	Directory   string
-// 	TableName   string
-// 	Columns     []string
-// 	ColumnTypes []string
-// 	Partitions  string
-// }
 
 type tableMeta struct {
 	name             string
@@ -131,7 +109,10 @@ func outputConfigSpec() *service.ConfigSpec {
 		Fields(connectFields()...).
 		Fields(recordFields()...).
 		Fields(
-			service.NewOutputMaxInFlightField(),
+			service.NewIntField("max_in_flight").
+				Description("The maximum number of messages to have in flight at a given time. Increase this to improve throughput.").
+				Default(64).
+				Advanced(),
 		)
 	//supported metadata
 	// - table
@@ -168,19 +149,19 @@ func getConnectFields(conf *service.ParsedConfig) (*api.PoolOption, error) {
 		return nil, err
 	}
 	if connectTimeout, err = conf.FieldDuration(fieldConnectTimeout); err != nil {
-		return nil, err
+		connectTimeout = DEFAULT_CONN_TIMEOUT
 	}
 	if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
-		return nil, err
+		connRetryMax = DEFAULT_RETRY_MAX
 	}
 	if poolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
-		return nil, err
+		poolSize = DEFAULT_POOL_SIZE
 	}
 	if lbEnabled, err = conf.FieldBool(fieldLoadBalanceEnabled); err != nil {
-		return nil, err
+		lbEnabled = DEFAULT_LB_ENABLED
 	}
 	if lbAddresses, err = conf.FieldStringList(fieldLoadBalanceAddresses); err != nil {
-		return nil, err
+		lbAddresses = []string{}
 	}
 
 	poolConfig := &api.PoolOption{
@@ -214,28 +195,50 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 		return nil, err
 	}
 	if partitionType, err = conf.FieldString(fieldPartitionType); err != nil {
-		return nil, err
+		partitionType = DEFAULT_PARTITION_TYPE
 	}
 	if partitionScheme, err = conf.FieldString(fieldPartitionScheme); err != nil {
-		return nil, err
+		now := time.Now()
+		layout := "2006.01.02"
+		start := now.Format(layout)
+		end := now.AddDate(1, 0, -1).Format(layout)
+		partitionScheme = fmt.Sprintf("%s..%s", start, end)
 	}
 	if engine, err = conf.FieldString(fieldEngine); err != nil {
-		return nil, err
+		engine = DEFAULT_ENGINE
 	}
 	if table, err = conf.FieldString(fieldTable); err != nil {
 		return nil, err
 	}
-	if columns, err = conf.FieldStringList(fieldColumns); err != nil {
-		return nil, err
-	}
-	if columnTypes, err = conf.FieldStringList(fieldColumnTypes); err != nil {
-		return nil, err
-	}
-	if partitionCols, err = conf.FieldStringList(fieldPartitionColumns); err != nil {
-		return nil, err
-	}
-	if sortCols, err = conf.FieldStringList(fieldSortColumns); err != nil {
-		return nil, err
+	if cols, err := conf.FieldObjectList(fieldColumns); err != nil || len(cols) == 0 {
+		columns = []string{DEFAULT_COL_TIMESTAMP, DEFAULT_COL_VALUE}
+		columnTypes = []string{DEFAULT_COL_TIMESTAMP, DEFAULT_COL_VALUE_TYPE}
+		partitionCols = []string{DEFAULT_COL_TIMESTAMP}
+		sortCols = []string{DEFAULT_COL_TIMESTAMP}
+	} else {
+		for _, col := range cols {
+			name, err := col.FieldString(fieldColumnName)
+			if err != nil {
+				return nil, err
+			} else {
+				columns = append(columns, name)
+			}
+			if typ, err := col.FieldString(fieldColumnType); err != nil {
+				return nil, err
+			} else {
+				columnTypes = append(columnTypes, typ)
+			}
+			if partition, err := col.FieldBool(fieldIsPartitionColumn); err != nil {
+				return nil, err
+			} else if partition {
+				partitionCols = append(partitionCols, name)
+			}
+			if sort, err := col.FieldBool(fieldIsSortColumn); err != nil {
+				return nil, err
+			} else if sort {
+				sortCols = append(sortCols, name)
+			}
+		}
 	}
 
 	return &dolphindbWriter{
@@ -328,62 +331,72 @@ func (writer *dolphindbWriter) WriteBatch(ctx context.Context, batch service.Mes
 			columns = writer.defaultColumns
 		}
 
-		useDefault = true
-		columnTypesAny, ok := msg.MetaGetMut("column_types")
-		if ok {
-			if columnTypes, ok = columnTypesAny.([]string); ok {
-				useDefault = false
+		if !useDefault {
+			columnTypesAny, ok := msg.MetaGetMut("column_types")
+			if !ok {
+				return fmt.Errorf("invalid column_types meta")
 			}
-		}
-		if useDefault {
-			columnTypes = writer.defaultColumnTypes
-		}
+			if columnTypes, ok = columnTypesAny.([]string); !ok {
+				return fmt.Errorf("invalid column_types meta")
+			}
 
+			partitionColsAny, ok := msg.MetaGetMut("partition_columns")
+			if !ok {
+				return fmt.Errorf("invalid partition_columns meta")
+			}
+			if partitionCols, ok = partitionColsAny.([]string); !ok {
+				return fmt.Errorf("invalid partition_columns meta")
+			}
+
+			sortColsAny, ok := msg.MetaGetMut("sort_columns")
+			if !ok {
+				return fmt.Errorf("invalid sort_columns meta")
+			}
+			if sortCols, ok = sortColsAny.([]string); !ok {
+				return fmt.Errorf("invalid sort_columns meta")
+			}
+		} else {
+			columnTypes = writer.defaultColumnTypes
+			partitionCols = writer.defaultPartitionColumns
+			sortCols = writer.defaultSortColumns
+		}
 		if len(columns) != len(columnTypes) {
 			return fmt.Errorf("the length of columns and column types do not match")
 		}
 
-		useDefault = true
-		partitionColsAny, ok := msg.MetaGetMut("partition_columns")
-		if ok {
-			if partitionCols, ok = partitionColsAny.([]string); ok {
-				useDefault = false
-			}
-		}
-		if useDefault {
-			partitionCols = writer.defaultPartitionColumns
-		}
-
-		useDefault = true
-		sortColsAny, ok := msg.MetaGetMut("sort_columns")
-		if ok {
-			if sortCols, ok = sortColsAny.([]string); ok {
-				useDefault = false
-			}
-		}
-		if useDefault {
-			sortCols = writer.defaultSortColumns
-		}
-
-		useDefault = true
-		valuesAny, ok = msg.MetaGetMut("values")
-		if ok {
-			if values, ok = valuesAny.([]interface{}); ok {
-				useDefault = false
-			}
-		}
-		if useDefault {
-			valuesAny, err = msg.AsStructured()
-			if err != nil {
-				return err
+		if !useDefault {
+			valuesAny, ok = msg.MetaGetMut("values")
+			if !ok {
+				return fmt.Errorf("invalid values meta")
 			}
 			if values, ok = valuesAny.([]interface{}); !ok {
-				return fmt.Errorf("invalid values format")
+				return fmt.Errorf("invalid values meta")
+			}
+		} else {
+			if len(columns) == 2 {
+				if columns[0] == DEFAULT_COL_TIMESTAMP && columnTypes[1] == DEFAULT_COL_VALUE_TYPE {
+					timestamp := time.Now()
+					val, err := msg.AsBytes()
+					if err != nil {
+						return err
+					}
+					values = []interface{}{timestamp, string(val)}
+				}
 			}
 		}
 		if len(columns) != len(values) {
 			return fmt.Errorf("the length of columns and values do not match")
 		}
+
+		// if useDefault {
+		// 	valuesAny, err = msg.AsStructured()
+		// 	if err != nil {
+		// 		return err
+		// 	}
+		// 	if values, ok = valuesAny.([]interface{}); !ok {
+		// 		return fmt.Errorf("invalid values format")
+		// 	}
+		// }
 
 		meta := tableMeta{
 			name:             table,
@@ -508,19 +521,24 @@ func connectFields() []*service.ConfigField {
 			Secret(),
 		service.NewDurationField(fieldConnectTimeout).
 			Description("The maximum amount of time to wait in order to establish a DolphinDB connection.").
-			Default("10s").
+			Default(DEFAULT_CONN_TIMEOUT.String()).
+			Optional().
 			Examples("1s", "500ms"),
 		service.NewIntField(fieldConnectRetryMax).
 			Description("The maximum number of retries to establish a DolphinDB connection.").
-			Default(0),
+			Default(DEFAULT_RETRY_MAX).
+			Optional(),
 		service.NewIntField(fieldPoolSize).
 			Description("The size of the connection pool.").
-			Default(1),
+			Default(DEFAULT_POOL_SIZE).
+			Optional(),
 		service.NewBoolField(fieldLoadBalanceEnabled).
 			Description("Whether to enable load balancing.").
-			Default(false),
+			Default(DEFAULT_LB_ENABLED).
+			Advanced(),
 		service.NewStringListField(fieldLoadBalanceAddresses).
 			Description("A list of load balance addresses.").
+			Advanced().
 			Example([]string{"127.0.0.1:8849"}),
 	}
 }
@@ -531,24 +549,41 @@ func recordFields() []*service.ConfigField {
 	return []*service.ConfigField{
 		service.NewStringField(fieldDBDirectory).
 			Description("The directory to store the database."),
-		service.NewStringField(fieldPartitionType).
+		service.NewStringEnumField(fieldPartitionType, "SEQ", "RANGE", "HASH", "VALUE", "LIST", "COMPO").
 			Description("The partition type. Supported types are: SEQ, RANGE, HASH, VALUE, LIST, COMPO").
-			Default("VALUE"), //TODO LintRule
+			Default(DEFAULT_PARTITION_TYPE).
+			Advanced(),
 		service.NewStringField(fieldPartitionScheme).
+			Optional().
+			Advanced().
 			Description("The partition scheme."),
-		service.NewStringField(fieldEngine).
+		service.NewStringEnumField(fieldEngine, "OLAP", "TSDB", "IMOLTP", "IOTDB", "'PKEY'").
 			Description("The storage engine. Supported engines are: OLAP, TSDB, IMOLTP, IOTDB, 'PKEY'.").
-			Default("TSDB"), //TODO LintRule
+			Default(DEFAULT_ENGINE).
+			Advanced(),
 		service.NewStringField(fieldTable).
 			Description("The default table name."),
-		service.NewStringListField(fieldColumns).
-			Description("The default columns of the table."),
-		service.NewStringListField(fieldColumnTypes).
-			Description("The default type for each column."),
-		service.NewStringListField(fieldPartitionColumns).
-			Description("The default partition columns of the table."),
-		service.NewStringListField(fieldSortColumns).
-			Description("The default sort columns of the table."),
+		service.NewObjectListField(fieldColumns,
+			service.NewStringField(fieldColumnName),
+			service.NewStringField(fieldColumnType),
+			service.NewBoolField(fieldIsPartitionColumn),
+			service.NewBoolField(fieldIsSortColumn),
+		).
+			Optional().
+			Advanced().
+			Description("The default columns of the table"),
+		// service.NewStringListField(fieldColumns).
+		// 	Advanced().
+		// 	Description("The default columns of the table."),
+		// service.NewStringListField(fieldColumnTypes).
+		// 	Advanced().
+		// 	Description("The default type for each column."),
+		// service.NewStringListField(fieldPartitionColumns).
+		// 	Advanced().
+		// 	Description("The default partition columns of the table."),
+		// service.NewStringListField(fieldSortColumns).
+		// 	Advanced().
+		// 	Description("The default sort columns of the table."),
 	}
 }
 
@@ -558,7 +593,7 @@ func buildScript(name, templ string, param map[string]any) (string, error) {
 	if err := tmpl.Execute(&buf, param); err != nil {
 		return "", err
 	}
-	// fmt.Println(buf.String())
+	fmt.Println(buf.String())
 	return buf.String(), nil
 }
 
@@ -633,17 +668,17 @@ func (writer *dolphindbWriter) testDbAvailable() error {
 	return execTask(writer.connectionPool, `version()`)
 }
 
-func doExecTask(pool *api.DBConnectionPool, task *api.Task) error {
-	err := pool.Execute([]*api.Task{task})
-	if err != nil {
-		return err
-	}
-	if !task.IsSuccess() {
-		err := task.GetError()
-		return err
-	}
-	return nil
-}
+// func doExecTask(pool *api.DBConnectionPool, task *api.Task) error {
+// 	err := pool.Execute([]*api.Task{task})
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if !task.IsSuccess() {
+// 		err := task.GetError()
+// 		return err
+// 	}
+// 	return nil
+// }
 
 func (writer *dolphindbWriter) createDatabase() error {
 	// create database if needed

@@ -32,6 +32,11 @@ const (
 	metaMeasurementArray = "measurement_array"
 	metaDataTypeArray    = "data_type_array"
 	metaValueArray       = "value_array"
+
+	DEFAULT_CONN_TIMEOUT        = 10 * time.Second
+	DEFAULT_RETRY_MAX           = 3
+	DEFAULT_POOL_SIZE           = 10
+	DEFAULT_TIMESTAMP_PRECISION = "ms"
 )
 
 type connectConfig struct {
@@ -88,7 +93,11 @@ func outputConfigSpec() *service.ConfigSpec {
 		Fields(connectFields()...).
 		Fields(recordFields()...).
 		Fields(
-			service.NewOutputMaxInFlightField(),
+			service.NewIntField("max_in_flight").
+				Description("The maximum number of messages to have in flight at a given time. Increase this to improve throughput.").
+				Default(64).
+				Advanced(),
+			// service.NewOutputMaxInFlightField(),
 		)
 	//supported metadata for single record
 	// - device_id
@@ -144,15 +153,15 @@ func getConnectFields(conf *service.ParsedConfig) (*connectConfig, error) {
 		return nil, err
 	}
 	if connectTimeout, err := conf.FieldDuration(fieldConnectTimeout); err != nil {
-		return nil, err
+		connTimeoutMs = int(DEFAULT_CONN_TIMEOUT.Milliseconds())
 	} else {
 		connTimeoutMs = int(connectTimeout.Milliseconds())
 	}
 	if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
-		return nil, err
+		connRetryMax = DEFAULT_RETRY_MAX
 	}
 	if maxPoolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
-		return nil, err
+		maxPoolSize = DEFAULT_POOL_SIZE
 	}
 
 	poolConfig := &client.PoolConfig{
@@ -191,7 +200,7 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdb
 		return nil, err
 	}
 	if timestampPrecision, err = conf.FieldString(fieldTimestampPrecision); err != nil {
-		return nil, err
+		timestampPrecision = DEFAULT_TIMESTAMP_PRECISION
 	}
 
 	return &iotdbWriter{
@@ -436,13 +445,16 @@ func connectFields() []*service.ConfigField {
 			Secret(),
 		service.NewDurationField(fieldConnectTimeout).
 			Description("The maximum amount of time to wait in order to establish an IoTDB connection.").
+			Optional().
 			Default("10s").
 			Examples("1s", "500ms"),
 		service.NewIntField(fieldConnectRetryMax).
 			Description("The maximum number of retries to establish an IoTDB connection.").
+			Optional().
 			Default(-1),
 		service.NewIntField(fieldPoolSize).
 			Description("The maximum size of the session pool.").
+			Optional().
 			Default(-1),
 	}
 }
@@ -453,12 +465,14 @@ func recordFields() []*service.ConfigField {
 			Description("The default device id."),
 		service.NewStringField(fieldMeasurement).
 			Description("The default measurement."),
-		service.NewStringField(fieldDataType).
+		service.NewStringEnumField(fieldDataType, "BOOLEAN", "INT32", "INT64", "FLOAT", "DOUBLE", "STRING", "TEXT", "TIMESTAMP", "DATE", "BLOB").
 			Description("The default data type. Supported types are: BOOLEAN, INT32, INT64, FLOAT, DOUBLE, STRING, TEXT, TIMESTAMP, DATE, BLOB").
-			Default("STRING"), //TODO LintRule
+			Default("STRING").
+			Advanced(),
 		service.NewStringField(fieldTimestampPrecision).
 			Description("The precision of the timestamp. Supported precisions are: ms, us, ns").
-			Default("ms"), //TODO LintRule
+			Optional().
+			Default(DEFAULT_TIMESTAMP_PRECISION),
 	}
 }
 

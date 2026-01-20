@@ -42,7 +42,7 @@ type ConfigField struct {
 }
 
 type FieldContent struct {
-	StringContent string            `json:"string_content,omitempty"`
+	ScalarContent string            `json:"scalar_content,omitempty"`
 	ObjectContent map[string]string `json:"object_content,omitempty"`
 	ArrayContent  []string          `json:"array_content,omitempty"`
 }
@@ -128,15 +128,19 @@ func lookupConfig(c *cli.Context, cliOpts *common.CLIOpts) error {
 
 	// sanitConf.DocsProvider.GetDocs(name, typ)
 
+	filter := func(spec docs.FieldSpec, _ any) bool {
+		return !spec.IsAdvanced
+	}
+
 	switch c.String("format") {
 	case "json":
-		jsonStr, err := formatJson(typ, name)
+		jsonStr, err := formatJson(typ, name, filter)
 		if err != nil {
 			return err
 		}
 		fmt.Println(jsonStr)
 	case "yaml":
-		yamlStr, err := formatYaml(typ, name)
+		yamlStr, err := formatYaml(typ, name, filter)
 		if err != nil {
 			return err
 		}
@@ -146,7 +150,7 @@ func lookupConfig(c *cli.Context, cliOpts *common.CLIOpts) error {
 	return nil
 }
 
-func formatJson(typ, name string) (string, error) {
+func formatJson(typ, name string, filter func(spec docs.FieldSpec, _ any) bool) (string, error) {
 	spec := stream.Spec()
 
 	var cSpec docs.ComponentSpec
@@ -174,7 +178,7 @@ func formatJson(typ, name string) (string, error) {
 		Examples:    cSpec.Examples,
 		Version:     cSpec.Version,
 	}
-	fields, err := lookupChildren(cSpec.Config.Children)
+	fields, err := lookupChildren(cSpec.Config.Children, filter)
 	if err != nil {
 		return "", err
 	}
@@ -187,7 +191,7 @@ func formatJson(typ, name string) (string, error) {
 	return string(jsonBytes), nil
 }
 
-func formatYaml(typ, name string) (string, error) {
+func formatYaml(typ, name string, filter func(spec docs.FieldSpec, _ any) bool) (string, error) {
 	conf := map[string]any{}
 	switch typ {
 	case "input":
@@ -218,9 +222,9 @@ func formatYaml(typ, name string) (string, error) {
 	// 	}
 	// 	return false
 	// }
-	filter := func(spec docs.FieldSpec, _ any) bool {
-		return !spec.IsAdvanced
-	}
+	// filter := func(spec docs.FieldSpec, _ any) bool {
+	// 	return !spec.IsAdvanced
+	// }
 	fullConf, err := spec.AnyToMap(conf, docs.ToValueConfig{
 		FallbackToAny: true,
 	})
@@ -258,9 +262,12 @@ func formatYaml(typ, name string) (string, error) {
 	return string(configYAML), nil
 }
 
-func lookupChildren(children docs.FieldSpecs) ([]ConfigField, error) {
+func lookupChildren(children docs.FieldSpecs, filter func(spec docs.FieldSpec, _ any) bool) ([]ConfigField, error) {
 	fields := []ConfigField{}
 	for _, f := range children {
+		if filter != nil && !filter(f, nil) {
+			continue
+		}
 		field := ConfigField{
 			Name:        f.Name,
 			Description: f.Description,
@@ -271,7 +278,7 @@ func lookupChildren(children docs.FieldSpecs) ([]ConfigField, error) {
 		}
 
 		if f.Type == docs.FieldTypeObject {
-			childFields, err := lookupChildren(f.Children)
+			childFields, err := lookupChildren(f.Children, filter)
 			if err != nil {
 				return nil, err
 			}
@@ -295,7 +302,7 @@ func lookupChildren(children docs.FieldSpecs) ([]ConfigField, error) {
 					if err != nil {
 						return nil, err
 					}
-					defaultContent.StringContent = str
+					defaultContent.ScalarContent = str
 				}
 				for _, e := range examples {
 					str, err := getScalarValue(e, f.Type, f.Name)
@@ -303,7 +310,7 @@ func lookupChildren(children docs.FieldSpecs) ([]ConfigField, error) {
 						return nil, err
 					}
 					exampleContent = append(exampleContent, FieldContent{
-						StringContent: str,
+						ScalarContent: str,
 					})
 				}
 			case docs.KindArray:
