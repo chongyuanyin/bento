@@ -32,7 +32,7 @@ jobs:
 
     - name: Build binary
       run: |
-        makedir -p dist
+        mkdir -p dist
         version="${{ steps.vars.outputs.tag }}"
         version="${version#v}"
         go_flags="-s -w -X 'main.Version=$(version)'"
