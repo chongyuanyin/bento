@@ -34,14 +34,17 @@ jobs:
       run: |
         pwd
         mkdir -p dist
+        ls -la .
         cd flowmq
         pwd
         version="${{ steps.vars.outputs.tag }}"
         version="${version#v}"
         go_flags="-s -w -X 'main.Version=${version}'"
         CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="${go_flags}" -a -o ../dist/bento-${version}-${{ matrix.goos }}-${{ matrix.goarch }} ./main.go
+        ls -la .
         cd ..
         pwd
+        ls -la .
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
@@ -61,6 +64,7 @@ jobs:
       - name: Gather release assets
         id: gather
         run: |
+          pwd
           ls -la .
           files=$(find dist -type f)
           echo "files<<EOF" >> $GITHUB_OUTPUT
