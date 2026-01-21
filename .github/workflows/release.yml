@@ -33,10 +33,11 @@ jobs:
     - name: Build binary
       run: |
         mkdir -p dist
+        cd flowmq
         version="${{ steps.vars.outputs.tag }}"
         version="${version#v}"
         go_flags="-s -w -X 'main.Version=${version}'"
-        CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="${go_flags}" -a -o dist/bento-${version}-${{ matrix.goos }}-${{ matrix.goarch }} ./flowmq/main.go
+        CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="${go_flags}" -a -o dist/bento-${version}-${{ matrix.goos }}-${{ matrix.goarch }} ./main.go
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
