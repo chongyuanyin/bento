@@ -3,117 +3,185 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - '*'
 
 jobs:
-  goreleaser:
+  build:
     runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+          
     steps:
+    - name: Check code
+      uses: actions/checkout@v4
 
-    - name: Check Out Repo
-      uses: actions/checkout@v6
-
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@v1.3.1
-      with:
-        tool-cache: false
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
-
-    - name: Install Go
+    - name: Set up Go
       uses: actions/setup-go@v6
       with:
         go-version: 1.25.x
         check-latest: true
 
-    - name: Release Notes
-      run: ./resources/scripts/release_notes.sh > ./release_notes.md
+    - name: Set up build variables
+      id: vars
+      run: |
+        TAG=${GITHUB_REF#refs/tags/}
+        echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
-    - name: GoReleaser
-      uses: goreleaser/goreleaser-action@v6
+    - name: Build binary
+      run: |
+        makedir -p dist
+        version="${{ steps.vars.outputs.tag }}"
+        version="${version#v}"
+        go_flags="-s -w -X 'main.Version=$(version)'"
+        CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="${go_flags}" -a -o dist/bento-${version}-${{ matrix.goos }}-${{ matrix.goarch }} ./flowmq/main.go
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
       with:
-        version: latest
-        args: release --release-notes=./release_notes.md --timeout 120m
-      env:
-        GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+        name: bento-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: dist/bento-*-${version}-${{ matrix.goos }}-${{ matrix.goarch }}*
 
-  docker:
+  release:
+    needs: build
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
-      contents: read
     steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
 
-    - name: Check Out Repo
-      uses: actions/checkout@v6
+      - name: Gather release assets
+        id: gather
+        run: |
+          files=$(find dist -type f)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          body: |
+            Automated release for ${{ github.ref_name }}
+          files: ${{ steps.gather.outputs.files }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
 
-    - name: Free Disk Space (Ubuntu)
-      uses: jlumbroso/free-disk-space@v1.3.1
-      with:
-        tool-cache: false
-        android: true
-        dotnet: true
-        haskell: true
-        large-packages: true
-        docker-images: true
-        swap-storage: true
 
-    - name: Log in to registry
-      run: echo "${{ secrets.GH_ACCESS_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
 
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_HUB_USERNAME }}
-        password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+  # goreleaser:
+  #   runs-on: ubuntu-latest
+  #   steps:
 
-    - name: Install Buildx
-      id: buildx
-      uses: docker/setup-buildx-action@v3
+  #   - name: Check Out Repo
+  #     uses: actions/checkout@v6
 
-    - name: Docker meta CGO
-      id: docker_meta_cgo
-      uses: docker/metadata-action@v5
-      with:
-        images: |
-          ghcr.io/${{ github.repository_owner }}/bento
-        flavor: |
-          latest=auto
-          suffix=-cgo
-        tags: |
-          type=semver,suffix=-cgo,pattern={{version}}
-          type=semver,suffix=-cgo,pattern={{major}}.{{minor}}
-          type=semver,suffix=-cgo,pattern={{major}}
+  #   - name: Free Disk Space (Ubuntu)
+  #     uses: jlumbroso/free-disk-space@v1.3.1
+  #     with:
+  #       tool-cache: false
+  #       android: true
+  #       dotnet: true
+  #       haskell: true
+  #       large-packages: true
+  #       docker-images: true
+  #       swap-storage: true
 
-    - name: Build and push CGO
-      uses: docker/build-push-action@v6
-      with:
-        context: ./
-        file: ./resources/docker/Dockerfile.cgo
-        push: true
-        tags: ${{ steps.docker_meta_cgo.outputs.tags }}
+  #   - name: Install Go
+  #     uses: actions/setup-go@v6
+  #     with:
+  #       go-version: 1.25.x
+  #       check-latest: true
 
-    - name: Docker meta
-      id: docker_meta
-      uses: docker/metadata-action@v5
-      with:
-        images: |
-          ghcr.io/${{ github.repository_owner }}/bento
-        tags: |
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{major}}
+  #   - name: Release Notes
+  #     run: ./resources/scripts/release_notes.sh > ./release_notes.md
 
-    - name: Build and push
-      uses: docker/build-push-action@v6
-      with:
-        context: ./
-        file: ./resources/docker/Dockerfile
-        builder: ${{ steps.buildx.outputs.name }}
-        platforms: linux/amd64,linux/arm64
-        push: true
-        tags: ${{ steps.docker_meta.outputs.tags }}
+  #   - name: GoReleaser
+  #     uses: goreleaser/goreleaser-action@v6
+  #     with:
+  #       version: latest
+  #       args: release --release-notes=./release_notes.md --timeout 120m
+  #     env:
+  #       GITHUB_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+  # docker:
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     packages: write
+  #     contents: read
+  #   steps:
+
+  #   - name: Check Out Repo
+  #     uses: actions/checkout@v6
+
+  #   - name: Free Disk Space (Ubuntu)
+  #     uses: jlumbroso/free-disk-space@v1.3.1
+  #     with:
+  #       tool-cache: false
+  #       android: true
+  #       dotnet: true
+  #       haskell: true
+  #       large-packages: true
+  #       docker-images: true
+  #       swap-storage: true
+
+  #   - name: Log in to registry
+  #     run: echo "${{ secrets.GH_ACCESS_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+
+  #   - name: Login to Docker Hub
+  #     uses: docker/login-action@v3
+  #     with:
+  #       username: ${{ secrets.DOCKER_HUB_USERNAME }}
+  #       password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+
+  #   - name: Install Buildx
+  #     id: buildx
+  #     uses: docker/setup-buildx-action@v3
+
+  #   - name: Docker meta CGO
+  #     id: docker_meta_cgo
+  #     uses: docker/metadata-action@v5
+  #     with:
+  #       images: |
+  #         ghcr.io/${{ github.repository_owner }}/bento
+  #       flavor: |
+  #         latest=auto
+  #         suffix=-cgo
+  #       tags: |
+  #         type=semver,suffix=-cgo,pattern={{version}}
+  #         type=semver,suffix=-cgo,pattern={{major}}.{{minor}}
+  #         type=semver,suffix=-cgo,pattern={{major}}
+
+  #   - name: Build and push CGO
+  #     uses: docker/build-push-action@v6
+  #     with:
+  #       context: ./
+  #       file: ./resources/docker/Dockerfile.cgo
+  #       push: true
+  #       tags: ${{ steps.docker_meta_cgo.outputs.tags }}
+
+  #   - name: Docker meta
+  #     id: docker_meta
+  #     uses: docker/metadata-action@v5
+  #     with:
+  #       images: |
+  #         ghcr.io/${{ github.repository_owner }}/bento
+  #       tags: |
+  #         type=semver,pattern={{version}}
+  #         type=semver,pattern={{major}}.{{minor}}
+  #         type=semver,pattern={{major}}
+
+  #   - name: Build and push
+  #     uses: docker/build-push-action@v6
+  #     with:
+  #       context: ./
+  #       file: ./resources/docker/Dockerfile
+  #       builder: ${{ steps.buildx.outputs.name }}
+  #       platforms: linux/amd64,linux/arm64
+  #       push: true
+  #       tags: ${{ steps.docker_meta.outputs.tags }}
