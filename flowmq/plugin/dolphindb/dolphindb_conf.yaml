@@ -1,12 +1,4 @@
 input:
-  # mqtt:
-  #   urls:
-  #     - tcp://localhost:1883
-  #   client_id: "demo1"
-  #   connect_timeout: 30s
-  #   topics:
-  #     - "t/1"
-  #   auto_replay_nacks: true
   generate:
     count: 5
     interval: 1s
@@ -21,43 +13,37 @@ input:
 pipeline:
   processors:
     - mapping: |
-        meta values = [
-          this.timestamp,
-          this.device,
-          this.temperature,
-          this.humidity
-        ]
         root = this
 
 output:
   dolphindb:
-    max_in_flight: 1
-    url: 47.76.29.6:8848
+    url: 100.80.0.31:8848
     username: admin
     password: "123456"
-    pool_size: 10
-    lb_enabled: false
-    connect_timeout: 10s
-    connect_retry_max: 1
     directory: "dfs://cydb"
-    partition_type: VALUE
-    partition_scheme: "2025.01.01..2025.12.31"
-    engine: TSDB
     table: test
-    columns:
-      - timestamp
-      - device
-      - temperature
-      - humidity
-    column_types:
-      - timestamp
-      - string
-      - int
-      - int
-    partition_columns:
-      - timestamp
-    sort_columns:
-      - timestamp
+    # partition_type: VALUE
+    # partition_scheme: "2025.01.01..2025.12.31"
+    # engine: TSDB
+    # columns:
+    #   - timestamp
+    #   - device
+    #   - temperature
+    #   - humidity
+    # column_types:
+    #   - timestamp
+    #   - string
+    #   - int
+    #   - int
+    # partition_columns:
+    #   - timestamp
+    # sort_columns:
+    #   - timestamp
+    # optional fields:
+    # max_in_flight: 64 //排队队列长度
+    # pool_size: 10 //连接池大小
+    # connect_timeout: 10s //连接超时
+    # connect_retry_max: 3 //最大重连次数
 
 logger:
   level: DEBUG

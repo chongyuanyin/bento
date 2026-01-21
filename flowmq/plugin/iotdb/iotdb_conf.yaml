@@ -8,7 +8,7 @@ input:
   #     - "t/1"
   #   auto_replay_nacks: true
   generate:
-    count: 1
+    count: 5
     interval: 1s
     mapping: |
       root = {
@@ -25,9 +25,9 @@ pipeline:
 
 output:
   iotdb:
-    max_in_flight: 1
+    # max_in_flight: 1
     urls:
-      - 47.76.29.6:6667
+      - 100.80.0.31:6667
     username: root
     password: root
     device_id: root.ln.wf01

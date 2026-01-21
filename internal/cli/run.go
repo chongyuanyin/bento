@@ -222,7 +222,7 @@ Either run {{.ProductName}} as a stream processor or choose a command:
 		},
 		Action: func(c *cli.Context) error {
 			if c.Bool("version") {
-				fmt.Printf("Version: %v\nDate: %v\n", opts.Version, opts.DateBuilt)
+				fmt.Printf("Version: %v\n", opts.Version)
 				os.Exit(0)
 			}
 			if c.Bool("help-autocomplete") {

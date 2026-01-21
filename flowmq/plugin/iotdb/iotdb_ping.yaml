@@ -1,0 +1,9 @@
+output:
+  iotdb:
+    max_in_flight: 1
+    urls:
+      - 47.76.29.6:6667
+    username: root
+    password: root
+    device_id: root.ln.wf01
+    measurement: temperature
