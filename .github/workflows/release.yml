@@ -58,7 +58,7 @@ jobs:
       - name: Gather release assets
         id: gather
         run: |
-          ls -la dist/
+          ls -la .
           files=$(find dist -type f)
           echo "files<<EOF" >> $GITHUB_OUTPUT
           echo "$files" >> $GITHUB_OUTPUT
