@@ -11,9 +11,11 @@ try {
 	if (directory == "") {
 		throw "directory must be provided"
 	}
-	database(directory=directory, partitionType=partitionType, partitionScheme=partitionScheme, engine=engine)
 	if (!existsDatabase(directory)) {
-		throw "failed to create database " + directory
+		database(directory=directory, partitionType=partitionType, partitionScheme=partitionScheme, engine=engine)
+		if (!existsDatabase(directory)) {
+			throw "failed to create database " + directory
+		}
 	}
 	msg = "successful"
 } catch (ex) {

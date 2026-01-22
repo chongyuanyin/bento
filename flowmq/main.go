@@ -20,6 +20,8 @@ import (
 	_ "flowmq/plugin/dolphindb"
 	_ "flowmq/plugin/iotdb"
 	_ "github.com/warpstreamlabs/bento/public/components/kafka"
+	_ "github.com/warpstreamlabs/bento/public/components/prometheus"
+	_ "github.com/warpstreamlabs/bento/public/components/pure"
 	// _ "github.com/warpstreamlabs/bento/public/components/mqtt"
 )
 

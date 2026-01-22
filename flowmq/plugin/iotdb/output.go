@@ -50,11 +50,6 @@ type iotdbWriter struct {
 
 	connConf *connectConfig
 
-	// poolConfig       *client.PoolConfig
-	// sessionPool      *client.SessionPool
-	// connectTimeoutMs int
-	// maxPoolSize      int
-
 	defaultDeviceId    string
 	defaultMeasurement string
 	defaultDataType    string
@@ -119,7 +114,7 @@ func constructOutput(conf *service.ParsedConfig, mgr *service.Resources) (out se
 	return
 }
 
-func getConnectFields(conf *service.ParsedConfig) (*connectConfig, error) {
+func getConnectFields(conf *service.ParsedConfig, forChecker bool) (*connectConfig, error) {
 	var (
 		host, port, username, password           string
 		nodeUrls                                 []string
@@ -152,16 +147,30 @@ func getConnectFields(conf *service.ParsedConfig) (*connectConfig, error) {
 	if password, err = conf.FieldString(fieldDBPassword); err != nil {
 		return nil, err
 	}
-	if connectTimeout, err := conf.FieldDuration(fieldConnectTimeout); err != nil {
+	if forChecker {
 		connTimeoutMs = int(DEFAULT_CONN_TIMEOUT.Milliseconds())
 	} else {
-		connTimeoutMs = int(connectTimeout.Milliseconds())
+		if connectTimeout, err := conf.FieldDuration(fieldConnectTimeout); err != nil {
+			connTimeoutMs = int(DEFAULT_CONN_TIMEOUT.Milliseconds())
+		} else {
+			connTimeoutMs = int(connectTimeout.Milliseconds())
+		}
 	}
-	if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
-		connRetryMax = DEFAULT_RETRY_MAX
+
+	if forChecker {
+		connRetryMax = 1
+	} else {
+		if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
+			connRetryMax = DEFAULT_RETRY_MAX
+		}
 	}
-	if maxPoolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
-		maxPoolSize = DEFAULT_POOL_SIZE
+
+	if forChecker {
+		maxPoolSize = 1
+	} else {
+		if maxPoolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
+			maxPoolSize = DEFAULT_POOL_SIZE
+		}
 	}
 
 	poolConfig := &client.PoolConfig{
@@ -181,7 +190,7 @@ func getConnectFields(conf *service.ParsedConfig) (*connectConfig, error) {
 }
 
 func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdbWriter, error) {
-	connConf, err := getConnectFields(conf)
+	connConf, err := getConnectFields(conf, false)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +224,7 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*iotdb
 }
 
 func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (checker service.PreChecker, err error) {
-	connConf, err := getConnectFields(conf)
+	connConf, err := getConnectFields(conf, true)
 	if err != nil {
 		return nil, err
 	}
@@ -228,16 +237,13 @@ func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (ch
 
 func (writer *iotdbWriter) Connect(ctx context.Context) error {
 	connConf := writer.connConf
-	pool := client.NewSessionPool(connConf.poolConfig, connConf.maxPoolSize, connConf.connectTimeoutMs, connConf.connectTimeoutMs, false)
-	// try to get session to verify connection
-	session, err := pool.GetSession()
-	defer pool.PutBack(session)
+	pool, _, err := connect(connConf, false)
 	if err != nil {
 		writer.log.Errorf("failed to get session: %v", err)
 		return err
 	}
 
-	connConf.sessionPool = &pool
+	connConf.sessionPool = pool
 	return nil
 }
 
@@ -411,12 +417,7 @@ func (writer *iotdbWriter) Close(context.Context) error {
 }
 func (checker *iotdbPreChecker) Check() error {
 	connConf := checker.connConf
-	pool := client.NewSessionPool(connConf.poolConfig, connConf.maxPoolSize, connConf.connectTimeoutMs, connConf.connectTimeoutMs, false)
-	defer func() {
-		pool.Close()
-	}()
-	// try to get session to verify connection
-	session, err := pool.GetSession()
+	_, session, err := connect(connConf, true)
 	if err != nil {
 		checker.log.Errorf("failed to get session: %v", err)
 		return err
@@ -428,7 +429,54 @@ func (checker *iotdbPreChecker) Check() error {
 		return err
 	}
 
+	fmt.Println("!!Connect Successfully")
 	return nil
+}
+
+func connect(opt *connectConfig, closable bool) (*client.SessionPool, *client.Session, error) {
+	var ctx context.Context
+	var cancel context.CancelFunc
+
+	if opt.connectTimeoutMs < 0 {
+		ctx = context.Background()
+		cancel = func() {}
+	} else {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(opt.connectTimeoutMs)*time.Millisecond)
+	}
+	defer cancel()
+
+	result := make(chan struct {
+		pool    *client.SessionPool
+		session *client.Session
+		err     error
+	}, 1)
+
+	go func() {
+		pool := client.NewSessionPool(opt.poolConfig, opt.maxPoolSize, opt.connectTimeoutMs,
+			opt.connectTimeoutMs, false)
+		// try to get session to verify connection
+		session, err := pool.GetSession()
+		result <- struct {
+			pool    *client.SessionPool
+			session *client.Session
+			err     error
+		}{&pool, &session, err}
+		if closable {
+			defer func() {
+				pool.Close()
+			}()
+		}
+	}()
+
+	select {
+	case res := <-result:
+		if res.err != nil {
+			return nil, nil, res.err
+		}
+		return res.pool, res.session, nil
+	case <-ctx.Done():
+		return nil, nil, fmt.Errorf("connection timeout after %v ms", opt.connectTimeoutMs)
+	}
 }
 
 func connectFields() []*service.ConfigField {

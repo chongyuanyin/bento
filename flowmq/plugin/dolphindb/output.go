@@ -129,12 +129,12 @@ func constructOutput(conf *service.ParsedConfig, mgr *service.Resources) (out se
 	return
 }
 
-func getConnectFields(conf *service.ParsedConfig) (*api.PoolOption, error) {
+func getConnectFields(conf *service.ParsedConfig, forChecker bool) (*api.PoolOption, error) {
 	var (
 		address, username, password string
 		connectTimeout              time.Duration
 		connRetryMax, poolSize      int
-		lbEnabled                   bool
+		reconnect, lbEnabled        bool
 		lbAddresses                 []string
 		err                         error
 	)
@@ -148,15 +148,35 @@ func getConnectFields(conf *service.ParsedConfig) (*api.PoolOption, error) {
 	if password, err = conf.FieldString(fieldDBPassword); err != nil {
 		return nil, err
 	}
-	if connectTimeout, err = conf.FieldDuration(fieldConnectTimeout); err != nil {
+	if forChecker {
 		connectTimeout = DEFAULT_CONN_TIMEOUT
+	} else {
+		if connectTimeout, err = conf.FieldDuration(fieldConnectTimeout); err != nil {
+			connectTimeout = DEFAULT_CONN_TIMEOUT
+		}
 	}
-	if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
-		connRetryMax = DEFAULT_RETRY_MAX
+
+	if forChecker {
+		connRetryMax = 0
+	} else {
+		if connRetryMax, err = conf.FieldInt(fieldConnectRetryMax); err != nil {
+			connRetryMax = DEFAULT_RETRY_MAX
+		}
 	}
-	if poolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
-		poolSize = DEFAULT_POOL_SIZE
+	if connRetryMax == 0 {
+		reconnect = false
+	} else {
+		reconnect = true
 	}
+
+	if forChecker {
+		poolSize = 1
+	} else {
+		if poolSize, err = conf.FieldInt(fieldPoolSize); err != nil {
+			poolSize = DEFAULT_POOL_SIZE
+		}
+	}
+
 	if lbEnabled, err = conf.FieldBool(fieldLoadBalanceEnabled); err != nil {
 		lbEnabled = DEFAULT_LB_ENABLED
 	}
@@ -170,12 +190,15 @@ func getConnectFields(conf *service.ParsedConfig) (*api.PoolOption, error) {
 		Password:             password,
 		PoolSize:             poolSize,
 		Timeout:              connectTimeout,
-		Reconnect:            true,
-		TryReconnectNums:     &connRetryMax,
+		Reconnect:            reconnect,
 		LoadBalance:          lbEnabled,
 		LoadBalanceAddresses: lbAddresses,
 	}
-
+	if connRetryMax < 0 {
+		poolConfig.TryReconnectNums = nil
+	} else {
+		poolConfig.TryReconnectNums = &connRetryMax
+	}
 	return poolConfig, nil
 }
 
@@ -186,7 +209,7 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 		table                                             string
 	)
 
-	poolConfig, err := getConnectFields(conf)
+	poolConfig, err := getConnectFields(conf, false)
 	if err != nil {
 		return nil, err
 	}
@@ -257,7 +280,7 @@ func newOutputWriter(conf *service.ParsedConfig, mgr *service.Resources) (*dolph
 }
 
 func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (checker service.PreChecker, err error) {
-	poolConfig, err := getConnectFields(conf)
+	poolConfig, err := getConnectFields(conf, true)
 	if err != nil {
 		return nil, err
 	}
@@ -269,19 +292,12 @@ func constructPreChecker(conf *service.ParsedConfig, mgr *service.Resources) (ch
 }
 
 func (writer *dolphindbWriter) Connect(ctx context.Context) error {
-	fmt.Println("!!Connect")
-	pool, err := api.NewDBConnectionPool(writer.poolConfig)
+	pool, err := connect(writer.poolConfig, false)
 	if err != nil {
 		writer.log.Errorf("failed to create connection pool: %v", err)
 		return err
 	}
 	writer.connectionPool = pool
-
-	// test connection
-	err = writer.testDbAvailable()
-	if err != nil {
-		return err
-	}
 
 	// create database if needed
 	err = writer.createDatabase()
@@ -473,11 +489,6 @@ func (writer *dolphindbWriter) WriteBatch(ctx context.Context, batch service.Mes
 			return err
 		}
 		fmt.Printf("!!!inserted: %v\n", colVals)
-
-		// err = appender.Close()
-		// if err != nil {
-		// 	writer.log.Warn("failed to close appender")
-		// }
 	}
 
 	return nil
@@ -493,18 +504,56 @@ func (writer *dolphindbWriter) Close(context.Context) error {
 }
 
 func (checker *dolphindbPreChecker) Check() error {
-	pool, err := api.NewDBConnectionPool(checker.poolConfig)
+	_, err := connect(checker.poolConfig, true)
 	if err != nil {
 		checker.log.Errorf("failed to create connection pool: %v", err)
 		return err
 	}
-
-	// test connection
-	err = execTask(pool, `version()`)
-	if err != nil {
-		return err
-	}
+	fmt.Println("!!Connect Successfully")
 	return nil
+}
+
+func connect(opt *api.PoolOption, closable bool) (*api.DBConnectionPool, error) {
+	var ctx context.Context
+	var cancel context.CancelFunc
+
+	if opt.Timeout < 0 {
+		ctx = context.Background()
+		cancel = func() {}
+	} else {
+		ctx, cancel = context.WithTimeout(context.Background(), opt.Timeout)
+	}
+	defer cancel()
+
+	result := make(chan struct {
+		pool *api.DBConnectionPool
+		err  error
+	}, 1)
+	go func() {
+		pool, err := api.NewDBConnectionPool(opt)
+		if err == nil {
+			// test connection
+			err = execTask(pool, `version()`)
+		}
+		result <- struct {
+			pool *api.DBConnectionPool
+			err  error
+		}{pool, err}
+		if closable {
+			defer func() {
+				if pool != nil {
+					pool.Close()
+				}
+			}()
+		}
+	}()
+
+	select {
+	case res := <-result:
+		return res.pool, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("connection timeout after %v", opt.Timeout)
+	}
 }
 
 func connectFields() []*service.ConfigField {

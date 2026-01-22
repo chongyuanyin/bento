@@ -1,29 +1,11 @@
 output:
   dolphindb:
     max_in_flight: 1
-    url: 47.76.29.6:8848
+    url: 100.80.0.31:8848
     username: admin
     password: "123456"
-    pool_size: 10
-    lb_enabled: false
-    connect_timeout: 10s
-    connect_retry_max: 1
     directory: "dfs://cydb"
-    partition_type: VALUE
-    partition_scheme: "2025.01.01..2025.12.31"
-    engine: TSDB
     table: test
-    columns:
-      - timestamp
-      - device
-      - temperature
-      - humidity
-    column_types:
-      - timestamp
-      - string
-      - int
-      - int
-    partition_columns:
-      - timestamp
-    sort_columns:
-      - timestamp
+    pool_size: 1
+    connect_timeout: 500s
+    connect_retry_max: 0

@@ -45,5 +45,8 @@ output:
     # connect_timeout: 10s //连接超时
     # connect_retry_max: 3 //最大重连次数
 
-logger:
-  level: DEBUG
+# logger:
+#   level: DEBUG
+
+# metrics:
+#   prometheus: {}
