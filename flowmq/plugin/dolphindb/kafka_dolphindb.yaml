@@ -1,0 +1,55 @@
+input:
+  kafka_franz:
+    seed_brokers:
+      - fmq-a7eb291d338947f5.tiger.dev.us-east-1.flowmq.link:9093
+    topics:
+      - stream1
+    consumer_group: "g1"
+    tls:
+      enabled: true
+      skip_cert_verify: true
+    sasl:
+      - mechanism: PLAIN
+        username: admin
+        password: admin
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+
+output:
+  dolphindb:
+    url: 100.80.0.31:8848
+    username: admin
+    password: "123456"
+    directory: "dfs://cydb"
+    table: test
+    # partition_type: VALUE
+    # partition_scheme: "2025.01.01..2025.12.31"
+    # engine: TSDB
+    # columns:
+    #   - timestamp
+    #   - device
+    #   - temperature
+    #   - humidity
+    # column_types:
+    #   - timestamp
+    #   - string
+    #   - int
+    #   - int
+    # partition_columns:
+    #   - timestamp
+    # sort_columns:
+    #   - timestamp
+    # optional fields:
+    # max_in_flight: 64 //排队队列长度
+    # pool_size: 10 //连接池大小
+    # connect_timeout: 10s //连接超时
+    # connect_retry_max: 3 //最大重连次数
+
+# logger:
+#   level: DEBUG
+
+# metrics:
+#   prometheus: {}
