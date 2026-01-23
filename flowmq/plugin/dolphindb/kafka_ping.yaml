@@ -1,0 +1,14 @@
+input:
+  kafka_franz:
+    seed_brokers:
+      - fmq-a7eb291d338947f5.tiger.dev.us-east-1.flowmq.link:9093
+    topics:
+      - stream1
+    consumer_group: "g1"
+    tls:
+      enabled: true
+      skip_cert_verify: true
+    sasl:
+      - mechanism: PLAIN
+        username: admin
+        password: admin

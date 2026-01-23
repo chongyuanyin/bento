@@ -53,7 +53,7 @@ func lookupConfig(c *cli.Context, cliOpts *common.CLIOpts) error {
 	}
 	typ := c.Args().Get(0)
 	name := c.Args().Get(1)
-	fmt.Println(typ, name)
+	// fmt.Println(typ, name)
 	// conf := map[string]any{}
 	// switch typ {
 	// case "input", "output", "pipeline", "buffer":

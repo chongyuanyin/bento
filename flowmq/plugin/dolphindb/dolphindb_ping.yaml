@@ -1,11 +1,8 @@
 output:
   dolphindb:
-    max_in_flight: 1
-    url: 100.80.0.31:8848
-    username: admin
+    # max_in_flight: 1
+    url: "100.80.0.31:8848"
+    username: "admin"
     password: "123456"
     directory: "dfs://cydb"
-    table: test
-    pool_size: 1
-    connect_timeout: 500s
-    connect_retry_max: 0
+    table: "test"
